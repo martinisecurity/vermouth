@@ -1,0 +1,13 @@
+/var/log/vermouth*log {
+	daily
+	rotate 10
+	missingok
+	notifempty
+	compress
+	sharedscripts
+	postrotate
+		if /usr/bin/systemctl --quiet is-active vermouth.service ; then
+			/usr/bin/systemctl reload vermouth
+		fi
+	endscript
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=STIR/SHAKEN call signing & validation
+Documentation=https://martinisecurity.com
+Wants=network-online.target
+After=network.target network-online.target
+
+[Service]
+EnvironmentFile=-/etc/sysconfig/vermouth
+ExecStart=/usr/bin/vermouth $CMD_OPTS
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

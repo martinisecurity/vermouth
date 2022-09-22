@@ -1,0 +1,8 @@
+Package: vermouth
+Version: VERSION_STRING-1
+Section: base
+Priority: optional
+Architecture: amd64
+Maintainer: IPiFony
+Description: Vermouth
+  STIR/SHAKEN server for signing & validating calls

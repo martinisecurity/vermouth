@@ -1,0 +1,12 @@
+/config-dev.yml
+**/log/
+/certs/sti_as/**
+/certs/acme/**
+/.idea/workspace.xml/
+.idea/aws.xml
+**/cache/
+/usr/bin/**
+/bin/**
+/target/**
+/package-tools/built-rpms/**
+/package-tools/ubuntu-deb/**

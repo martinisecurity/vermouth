@@ -1,0 +1,13 @@
+/var/log/vermouth*log {
+	daily
+	rotate 10
+	missingok
+	notifempty
+	compress
+	sharedscripts
+	postrotate
+		if /sbin/service vermouth status > /dev/null 2> /dev/null ; then
+			/sbin/service vermouth reload
+		fi
+	endscript
+}
