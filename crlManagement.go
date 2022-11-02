@@ -113,8 +113,29 @@ func refreshCrl(responseChan chan<- Message, crlDistPoint string) {
 	// AIA chasing and chain validation
 
 	// Look through the extensions for the AIA
+	// Also look to ensure the URL we used to fetch the CRL is the same URL found in the Issuing Distribution Point
 	var aiaUrl string
 	for _, extension := range revocationList.Extensions {
+		if extension.Id.Equal(oids["crlIssuingDistPoint"]) {
+			issuingDistPointUrl, err := getCrlIssuingDistPointUrlFromAsn1Extension(extension)
+			if err != nil || !IsUrl(issuingDistPointUrl) {
+				logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not get Issuing Dist Point info"}
+				nextAttempt := thisCacheEntry.IncrementError()
+				stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+				statusMsg.MsgStr = nextAttempt
+				responseChan <- statusMsg
+				return
+			}
+			if issuingDistPointUrl != crlDistPoint {
+				logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: CRL Dist Point URL does not match Issuing Dist Point URL"}
+				nextAttempt := thisCacheEntry.IncrementError()
+				stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+				statusMsg.MsgStr = nextAttempt
+				responseChan <- statusMsg
+				return
+			}
+
+		}
 		if extension.Id.Equal(oids["authorityInformationAccess"]) {
 			aiaUrl, err = getAIAFromAsn1Extension(extension)
 			if err != nil || !IsUrl(aiaUrl) {

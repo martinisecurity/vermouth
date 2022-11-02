@@ -26,7 +26,7 @@ import (
 )
 
 var acmeAcctKey = &ecdsa.PrivateKey{}
-var acmeMethods map[string]string
+var acmeMethods = &AcmeDirectory{}
 var nextNonce = &agedNonce{}
 
 const AcmeSignerKey = "signer.key"
@@ -58,7 +58,7 @@ func initializeAcme() {
 	}
 	err = readyAcmeApi()
 	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "ACME Client: API Unavailable!"}
+		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "ACME Client: API Unavailable! - " + err.Error()}
 		return
 	} else {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "ACME Client: API Fetch Successful"}
@@ -154,7 +154,6 @@ func CheckAndRefreshAcmeCert() {
 }
 
 func readyAcmeApi() error {
-	acmeMethods = make(map[string]string)
 	acmeDirectory := martiniStaging
 	if GlobalConfig.IsProdMode() {
 		acmeDirectory = martiniProd
@@ -215,7 +214,7 @@ func registerAcmeKey() error {
 	var innerSignerOpts = jose.SignerOptions{}
 	innerSignerOpts.WithHeader("alg", "HS256")
 	innerSignerOpts.WithHeader("kid", GlobalConfig.GetStiAsAcmeEabKeyId())
-	innerSignerOpts.WithHeader("url", acmeMethods["newAccount"])
+	innerSignerOpts.WithHeader("url", acmeMethods.NewAccount)
 	hmacSigner, err := jose.NewSigner(innerJoseKey, &innerSignerOpts)
 	if err != nil {
 		return err
@@ -242,7 +241,7 @@ func registerAcmeKey() error {
 	signerOpts.WithHeader("jwk", jwk)
 	signerOpts.WithHeader("alg", "ES256")
 	signerOpts.WithHeader("nonce", nonce)
-	signerOpts.WithHeader("url", acmeMethods["newAccount"])
+	signerOpts.WithHeader("url", acmeMethods.NewAccount)
 	eccSigner, err := jose.NewSigner(joseKey, &signerOpts)
 	if err != nil {
 		return err
@@ -257,7 +256,7 @@ func registerAcmeKey() error {
 	}
 	signedJwt := jws.FullSerialize()
 
-	req, _ := http.NewRequest(http.MethodPost, acmeMethods["newAccount"], bytes.NewBuffer([]byte(signedJwt)))
+	req, _ := http.NewRequest(http.MethodPost, acmeMethods.NewAccount, bytes.NewBuffer([]byte(signedJwt)))
 	req.Header.Add("Content-Type", "application/jose+json")
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := httpClient.Do(req)
@@ -398,7 +397,7 @@ func createNewOrder() (*OrderResponse, string, error) {
 	signerOpts := jose.SignerOptions{}
 	signerOpts.WithHeader("alg", "ES256")
 	signerOpts.WithHeader("nonce", nonce)
-	signerOpts.WithHeader("url", acmeMethods["newOrder"])
+	signerOpts.WithHeader("url", acmeMethods.NewOrder)
 	signerOpts.WithHeader("kid", GlobalConfig.getStiAsAcmeAcctLocationUrl())
 	joseKey := jose.SigningKey{Algorithm: jose.ES256, Key: acmeAcctKey}
 	eccSigner, err := jose.NewSigner(joseKey, &signerOpts)
@@ -431,7 +430,7 @@ func createNewOrder() (*OrderResponse, string, error) {
 		return nil, "", err
 	}
 	signedJwt := jws.FullSerialize()
-	req, _ := http.NewRequest(http.MethodPost, acmeMethods["newOrder"], bytes.NewBuffer([]byte(signedJwt)))
+	req, _ := http.NewRequest(http.MethodPost, acmeMethods.NewOrder, bytes.NewBuffer([]byte(signedJwt)))
 	req.Header.Add("Content-Type", "application/jose+json")
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := httpClient.Do(req)
@@ -496,7 +495,7 @@ func retrieveChallenge(url string) (*ChallengeResponse, error) {
 		return nil, errors.New("post-as-get for acme challenge failed with status " + strconv.Itoa(resp.StatusCode))
 	}
 	respBytes, err := io.ReadAll(resp.Body)
-	fmt.Println(string(respBytes))
+	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -535,7 +534,7 @@ func respondToChallenge(url string) (*ChallengeResponse, error) {
 		return nil, err
 	}
 	signedJwt := jws.FullSerialize()
-	fmt.Println(signedJwt)
+	//fmt.Println(signedJwt)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer([]byte(signedJwt)))
 	req.Header.Add("Content-Type", "application/jose+json")
 	req.Header.Set("User-Agent", UserAgent)
@@ -546,7 +545,7 @@ func respondToChallenge(url string) (*ChallengeResponse, error) {
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)
-	fmt.Println(string(respBytes))
+	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +568,7 @@ func pollOrder(orderUrl string, delay time.Duration) (*OrderResponse, error) {
 	}
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	respBytes, err := io.ReadAll(resp.Body)
-	fmt.Println(string(respBytes))
+	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -686,7 +685,7 @@ func requestCert(csrBytes []byte, finalizeUrl string) (*OrderResponse, error) {
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)
-	fmt.Println(string(respBytes))
+	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -855,7 +854,7 @@ type agedNonce struct {
 
 func (n *agedNonce) Get() (string, error) {
 	if n.nonce == "" || time.Since(n.age).Minutes() > 5 {
-		url := acmeMethods["newNonce"]
+		url := acmeMethods.NewNonce
 		resp, err := httpClient.Get(url)
 		if err != nil {
 			return "", err
@@ -891,6 +890,15 @@ func getAcmePubKeyFingerprint(key *ecdsa.PublicKey) (string, error) {
 	}
 
 	return "SHA256 " + string(dst), nil
+}
+
+type AcmeDirectory struct {
+	KeyChange  string      `json:"keyChange"`
+	Meta       interface{} `json:"meta"`
+	NewAccount string      `json:"newAccount"`
+	NewNonce   string      `json:"newNonce"`
+	NewOrder   string      `json:"newOrder"`
+	RevokeCert string      `json:"revokeCert"`
 }
 
 type AcmeMetaData struct {

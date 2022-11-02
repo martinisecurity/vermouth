@@ -16,7 +16,7 @@ import (
 func main() {
 	// Config can be passed in on startup or defaults to config.yml local to go executable
 	var configPath string
-	flag.StringVar(&configPath, "config", LookupEnvOrString("VERMOUTH_CONFIG", "config-dev.yml"), "path to config file")
+	flag.StringVar(&configPath, "config", LookupEnvOrString("VERMOUTH_CONFIG", "config.yml"), "path to config file")
 	flag.Parse()
 
 	// Load static config from YAML

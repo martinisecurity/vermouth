@@ -20,6 +20,7 @@ var oids = map[string]asn1.ObjectIdentifier{
 	"c":                          {2, 5, 4, 6},
 	"caIssuers":                  {1, 3, 6, 1, 5, 5, 7, 48, 2},
 	"cn":                         {2, 5, 4, 3},
+	"crlIssuingDistPoint":        {2, 5, 29, 28},
 	"crlDistributionPoints":      {2, 5, 29, 31},
 	"dc":                         {0, 9, 2342, 19200300, 100, 1, 25},
 	"description":                {2, 5, 4, 13},
@@ -179,6 +180,33 @@ type CRLIssuerContainer struct {
 type DistributionPoint struct {
 	DistributionPointName `asn1:"tag:0,5"`
 	CRLIssuerContainer    `asn1:"tag:2,5"`
+}
+
+func getCrlIssuingDistPointUrlFromAsn1Extension(e pkix.Extension) (string, error) {
+	val := cryptobyte.String(e.Value)
+	var generalNameDER cryptobyte.String
+	if !(val.ReadASN1(&val, cryptobyte_asn1.SEQUENCE)) {
+		return "", errors.New("x509: invalid issuing distribution point")
+	}
+	if !(val.ReadASN1(&val, cryptobyte_asn1.Tag(0).Constructed().ContextSpecific())) {
+		return "", errors.New("x509: invalid issuing distribution point")
+	}
+	if !(val.ReadASN1(&generalNameDER, cryptobyte_asn1.Tag(0).Constructed().ContextSpecific())) {
+		return "", errors.New("x509: invalid issuing distribution point")
+	}
+	// We could, in theory, have multiple options for "GeneralNames". We only want option 6
+	for !(generalNameDER.Empty()) {
+		if !generalNameDER.PeekASN1Tag(cryptobyte_asn1.Tag(6).ContextSpecific()) {
+			var outTag cryptobyte_asn1.Tag
+			generalNameDER.ReadAnyASN1(&generalNameDER, &outTag)
+			continue
+		}
+		if !generalNameDER.ReadASN1(&generalNameDER, cryptobyte_asn1.Tag(6).ContextSpecific()) {
+			return "", errors.New("x509: invalid issuing distribution point")
+		}
+		return string(generalNameDER), nil
+	}
+	return "", errors.New("x509: invalid issuing distribution point")
 }
 
 func getAIAFromAsn1Extension(e pkix.Extension) (string, error) {
