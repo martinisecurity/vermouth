@@ -3,7 +3,7 @@ package vermouth
 import (
 	"context"
 	"github.com/ipifony/vermouth/logger"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -14,27 +14,47 @@ const (
 		"VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"
 )
 
-var Pool *pgxpool.Pool
+var pool *pgxpool.Pool
 
-func GetConnection() (*pgxpool.Pool, error) {
+func ClosePool() {
+	if pool != nil {
+		pool.Close()
+	}
+}
+
+func InitPool() error {
 	if !GlobalConfig.isDbEnabled() {
-		return nil, nil
+		return nil
 	}
-	if Pool != nil {
-		return Pool, nil
+	var dbErr error
+	config, dbErr := pgxpool.ParseConfig(GlobalConfig.PrepareDbUrl() + "?pool_max_conns=5&pool_min_conns=2")
+	if dbErr != nil {
+		return dbErr
 	}
-	return pgxpool.Connect(context.Background(), GlobalConfig.PrepareDbUrl())
+	pool, dbErr = pgxpool.NewWithConfig(context.Background(), config)
+	if dbErr != nil {
+		pool = nil
+		return dbErr
+	}
+	dbErr = pool.Ping(context.Background())
+	if dbErr != nil {
+		pool = nil
+		return dbErr
+	}
+	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "DB Logging Active"}
+	return nil
 }
 
 func WriteSigningRecord(srcTn *string, dstTn *string, attestation *string, origId *string) {
-	dbConn, err := GetConnection()
-	if err != nil {
+	if pool == nil {
+		return
+	}
+	dbConn, err := pool.Acquire(context.Background())
+	if err != nil || dbConn == nil {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "Unable to get a db connection. Error: " + err.Error()}
 		return
 	}
-	if dbConn == nil {
-		return
-	}
+	defer dbConn.Release()
 	ret, err := dbConn.Query(context.Background(), InsertSigningSql, srcTn, dstTn, attestation, origId)
 	if err != nil {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "Error inserting into signing_record. Error: " + err.Error()}
@@ -44,14 +64,15 @@ func WriteSigningRecord(srcTn *string, dstTn *string, attestation *string, origI
 }
 
 func WriteVerificationRecord(record *VerificationRecord) {
-	dbConn, err := GetConnection()
-	if err != nil {
+	if pool == nil {
+		return
+	}
+	dbConn, err := pool.Acquire(context.Background())
+	if err != nil || dbConn == nil {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "Unable to get a db connection. Error: " + err.Error()}
 		return
 	}
-	if dbConn == nil {
-		return
-	}
+	defer dbConn.Release()
 	var certChain string
 	if record.CertBytes != nil {
 		certChain = string(*record.CertBytes)

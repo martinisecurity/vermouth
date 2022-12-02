@@ -20,6 +20,8 @@ import (
 
 // CertIssuerOid OID for certIssuer
 const CertIssuerOid = "2.5.29.29"
+const CAListProxyProd = "https://wfe.prod.martinisecurity.com/v1/stipa/proxy?url="
+const CAListProxyDev = "https://wfe.dev.martinisecurity.com/v1/stipa/proxy?url="
 
 var ourTrustAnchors StirShakenCaPool
 
@@ -133,10 +135,28 @@ func certWasRevoked(cert *x509.Certificate, crlWorkChan chan string) bool {
 		go scheduleCrlJob(0*time.Second, crlDistPoint, crlWorkChan)
 		return false
 	}
+
+	if cacheEntry.Status == stivs.Problematic {
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Cache Entry " + cacheEntry.URI + " is problematic"}
+	}
+
+	if cacheEntry.Status == stivs.InvalidDestPoint {
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Cache Entry " + cacheEntry.URI + " is invalid"}
+		return true
+	}
+
 	for _, revokedCert := range cacheEntry.Revocations {
-		if cert.SerialNumber == revokedCert.SerialNumber && cert.Issuer.String() == revokedCert.Issuer.String() {
-			return true
+		// Some legacy CRLs (non-centralized CRLs may not have an issue)
+		if revokedCert.Issuer.String() == "" {
+			if cert.SerialNumber == revokedCert.SerialNumber {
+				return true
+			}
+		} else {
+			if cert.SerialNumber == revokedCert.SerialNumber && cert.Issuer.String() == revokedCert.Issuer.String() {
+				return true
+			}
 		}
+
 	}
 	return false
 }
@@ -180,7 +200,9 @@ func getCaList(url string, accessToken string) ([]byte, error) {
 		return nil, err
 	}
 	r.Header.Add("Accept", "application/jose+json")
-	r.Header.Add("Authorization", accessToken)
+	if len(accessToken) > 0 {
+		r.Header.Add("Authorization", accessToken)
+	}
 	r.Header.Set("User-Agent", UserAgent)
 	resp, err := httpClient.Do(r)
 	if err != nil {
@@ -217,6 +239,9 @@ func getAccessToken() (*string, error) {
 }
 
 func refreshTrustAnchors(responseChan chan<- Message, stiPaRoots *x509.CertPool) {
+	caProxyMode := false
+	var caListResponseBytes []byte
+
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Refreshing..."}
 	statusMsg := Message{
 		MessageSender: TrustAnchorWorker,
@@ -226,19 +251,44 @@ func refreshTrustAnchors(responseChan chan<- Message, stiPaRoots *x509.CertPool)
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Requesting access token"}
 	token, err := getAccessToken()
 	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: " + err.Error()}
+		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: Access Token Error. " + err.Error()}
 		responseChan <- statusMsg
-		return
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Using CA-List proxy..."}
+		martiniCAListProxy := CAListProxyProd
+		if GlobalConfig.isAcmeProdMode() {
+			martiniCAListProxy = CAListProxyDev
+		}
+		caListResponseBytes, err = getCaList(martiniCAListProxy+GlobalConfig.GetStiPaApiBaseUrl()+"/ca-list", "")
+		if err != nil {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: Failed to get response from ca-list alternate request - " + err.Error()}
+			responseChan <- statusMsg
+			return
+		}
+		caProxyMode = true
+	} else {
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Got accessToken. token=" + *token}
 	}
-	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Got accessToken. token=" + *token}
-	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Requesting ca-list..."}
-	// Next we fetch and verify the CA List. The signed JWT representing the trust list is part of the JSON response.
-	caListUrl := GlobalConfig.GetStiPaApiBaseUrl() + "/ca-list"
-	caListResponseBytes, err := getCaList(caListUrl, *token)
-	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: Failed to get response from ca-list request - " + err.Error()}
-		responseChan <- statusMsg
-		return
+	// This will execute if we have succeeded in retrieving an access token
+	if token != nil && len(*token) > 0 {
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Requesting ca-list..."}
+		caListUrl := GlobalConfig.GetStiPaApiBaseUrl() + "/ca-list"
+		caListResponseBytes, err = getCaList(caListUrl, *token)
+		if err != nil {
+			// Still fall back to proxy if the above request fails
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: Failed to get response from ca-list request - " + err.Error() + ". Will try proxy..."}
+			responseChan <- statusMsg
+			martiniCAListProxy := CAListProxyProd
+			if GlobalConfig.isAcmeProdMode() {
+				martiniCAListProxy = CAListProxyDev
+			}
+			caListResponseBytes, err = getCaList(martiniCAListProxy+GlobalConfig.GetStiPaApiBaseUrl()+"/ca-list", "")
+			if err != nil {
+				logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: Failed to get response from ca-list proxy - " + err.Error()}
+				responseChan <- statusMsg
+				return
+			}
+			caProxyMode = true
+		}
 	}
 	var caList string
 	var caListRespMap map[string]string
@@ -266,7 +316,11 @@ func refreshTrustAnchors(responseChan chan<- Message, stiPaRoots *x509.CertPool)
 	}
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Requesting X5U..."}
 	x5uUrl := fmt.Sprintf("%v", jws.Signatures[0].Header.ExtraHeaders["x5u"])
-	certBytes, err := getCertsFromUrl(x5uUrl)
+	var certBytes []byte
+	if caProxyMode {
+		x5uUrl = "https://wfe.prod.martinisecurity.com/v1/stipa/signer?x5u=" + x5uUrl
+	}
+	certBytes, err = getCertsFromUrl(x5uUrl)
 	if err != nil {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: X5U get request failed - " + err.Error()}
 		responseChan <- statusMsg

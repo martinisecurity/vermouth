@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/ipifony/vermouth/logger"
+	"github.com/ipifony/vermouth/stivs"
 	"net/http"
 	"sync"
 	"time"
@@ -36,8 +37,9 @@ const ( // 15, 60 * 12
 	// ReportingIntervalMinutes determines how often aggregate data is set to be collected. Must be divisible by MinutesPerBucket
 	ReportingIntervalMinutes = 60 * 12
 	TotalIntervals           = ReportingIntervalMinutes / MinutesPerBucket
-	SigningUrl               = "https://greg.vermouth.link/signing"
-	VerificationUrl          = "https://greg.vermouth.link/verification"
+	SigningUrl               = "https://m.vermouth.link/signing"
+	VerificationUrl          = "https://m.vermouth.link/verification"
+	CertRepoReportingUrl     = "https://m.vermouth.link/certs"
 )
 
 var (
@@ -47,6 +49,15 @@ var (
 
 func readyDataCollection() {
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Data Collection: Initializing..."}
+
+	if GlobalConfig.isDbEnabled() {
+		err := InitPool()
+		if err != nil {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "DB Access Failed..."}
+			GlobalConfig.setDbEnabled(false)
+		}
+	}
+
 	SigningData.signingBuckets = make([]SigningBucket, TotalIntervals)
 	SigningData.ready = false
 	VerificationData.verificationBuckets = make([]VerificationBucket, TotalIntervals)
@@ -130,6 +141,10 @@ type VerificationDataExport struct {
 	Buckets      *[]VerificationBucket `json:"buckets"`
 }
 
+type CertUrls struct {
+	Urls []string `json:"urls"`
+}
+
 func (c *verificationCollection) setReady(ready bool) {
 	c.Lock()
 	defer c.Unlock()
@@ -169,6 +184,25 @@ func (c *verificationCollection) rotateBucket() {
 					return
 				}
 				defer resp.Body.Close()
+			}()
+			logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Stats: Posting cert repo data"}
+			go func() {
+				urls := stivs.GetCertCache().GetKeysAsArray()
+				if len(urls) > 0 {
+					certUrls := CertUrls{Urls: urls}
+					jsonBytes, err := json.Marshal(certUrls)
+					if err != nil {
+						return
+					}
+					req, err := http.NewRequest(http.MethodPost, CertRepoReportingUrl, bytes.NewBuffer(jsonBytes))
+					req.Header.Add("Content-Type", "application/json")
+					req.Header.Set("User-Agent", UserAgent)
+					resp, err := httpClient.Do(req)
+					if err != nil {
+						return
+					}
+					defer resp.Body.Close()
+				}
 			}()
 		}
 		VerificationData.verificationBuckets = make([]VerificationBucket, TotalIntervals)

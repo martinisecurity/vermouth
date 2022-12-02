@@ -46,6 +46,9 @@ type Config struct {
 		AcmeCrlIssuerFallback string `yaml:"acme_crl_issuer_fallback"`
 		AcmeDir               string `yaml:"acme_dir"`
 	} `yaml:"sti_as"`
+	StiVs struct {
+		StrictCrlHandling bool `yaml:"strict_crl_handling"`
+	} `yaml:"sti_vs"`
 	Database struct {
 		Enabled  bool   `yaml:"enabled"`
 		Host     string `yaml:"host"`
@@ -129,7 +132,6 @@ func (ourConfig *Config) GetStiPaApiPassword() string {
 	defer ourConfig.RUnlock()
 	return ourConfig.StiPa.ApiPassword
 }
-
 func (ourConfig *Config) GetStiAsAcmeAcctId() string {
 	ourConfig.RLock()
 	defer ourConfig.RUnlock()
@@ -150,13 +152,11 @@ func (ourConfig *Config) GetStiAsCarrierOcn() string {
 	defer ourConfig.RUnlock()
 	return ourConfig.StiAs.CarrierOcn
 }
-
-func (ourConfig *Config) IsProdMode() bool {
+func (ourConfig *Config) isAcmeProdMode() bool {
 	ourConfig.RLock()
 	defer ourConfig.RUnlock()
 	return ourConfig.StiAs.AcmeProdEnabled
 }
-
 func (ourConfig *Config) GetStiAsAcmeAcctKeyFile() string {
 	ourConfig.RLock()
 	defer ourConfig.RUnlock()
@@ -210,6 +210,12 @@ func (ourConfig *Config) getListenPoint() string {
 	return ourConfig.Server.ListenPoint
 }
 
+func (ourConfig *Config) isStrictCrlHandling() bool {
+	ourConfig.RLock()
+	defer ourConfig.RUnlock()
+	return ourConfig.StiVs.StrictCrlHandling
+}
+
 func (ourConfig *Config) setStiAsAcmeAcctKeyBound(binding bool) {
 	ourConfig.Lock()
 	defer ourConfig.Unlock()
@@ -239,6 +245,12 @@ func (ourConfig *Config) SetServerInstanceId(instanceId string) {
 	ourConfig.Lock()
 	defer ourConfig.Unlock()
 	ourConfig.Server.InstanceId = instanceId
+}
+
+func (ourConfig *Config) setDbEnabled(enabled bool) {
+	ourConfig.Lock()
+	defer ourConfig.Unlock()
+	ourConfig.Database.Enabled = enabled
 }
 
 func (ourConfig *Config) Save() {

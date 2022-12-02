@@ -48,7 +48,9 @@ func (cache *crlCache) CopyEntry(crlUrl string) *CrlCacheEntry {
 	}
 
 	deepNumber := new(big.Int)
-	deepNumber.Set(orig.Number)
+	if orig.Number != nil {
+		deepNumber.Set(orig.Number)
+	}
 
 	ourCopy := CrlCacheEntry{
 		URI:             orig.URI,

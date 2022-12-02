@@ -34,9 +34,6 @@ const AcmeSignerCert = "signer.crt"
 
 var acmeMetaData = &AcmeMetaData{}
 
-const martiniStaging = "https://wfe.dev.martinisecurity.com/v2/acme/directory"
-const martiniProd = "https://wfe.prod.martinisecurity.com/v2/acme/directory"
-
 type AcmeStatus string
 
 const (
@@ -49,6 +46,9 @@ const (
 	AcmeDeactivated AcmeStatus = "deactivated"
 	AcmeComplete    AcmeStatus = "complete"
 )
+
+const martiniStaging = "https://wfe.dev.martinisecurity.com/v2/acme/directory"
+const martiniProd = "https://wfe.prod.martinisecurity.com/v2/acme/directory"
 
 func initializeAcme() {
 	// Attempt to load up existing ACME cert
@@ -154,11 +154,14 @@ func CheckAndRefreshAcmeCert() {
 }
 
 func readyAcmeApi() error {
-	acmeDirectory := martiniStaging
-	if GlobalConfig.IsProdMode() {
-		acmeDirectory = martiniProd
+	martiniAcmeDirectory := martiniProd
+	if !GlobalConfig.isAcmeProdMode() {
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "ACME Client: Dev API Being Used..."}
+		martiniAcmeDirectory = martiniStaging
+	} else {
+		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "ACME Client: Production API Being Used..."}
 	}
-	resp, err := httpClient.Get(acmeDirectory)
+	resp, err := httpClient.Get(martiniAcmeDirectory)
 	if err != nil {
 		return err
 	}
@@ -443,7 +446,6 @@ func createNewOrder() (*OrderResponse, string, error) {
 		return nil, "", errors.New("create order response was " + strconv.Itoa(resp.StatusCode))
 	}
 	respBytes, err := io.ReadAll(resp.Body)
-	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, "", err
 	}
@@ -495,7 +497,6 @@ func retrieveChallenge(url string) (*ChallengeResponse, error) {
 		return nil, errors.New("post-as-get for acme challenge failed with status " + strconv.Itoa(resp.StatusCode))
 	}
 	respBytes, err := io.ReadAll(resp.Body)
-	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +535,6 @@ func respondToChallenge(url string) (*ChallengeResponse, error) {
 		return nil, err
 	}
 	signedJwt := jws.FullSerialize()
-	//fmt.Println(signedJwt)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer([]byte(signedJwt)))
 	req.Header.Add("Content-Type", "application/jose+json")
 	req.Header.Set("User-Agent", UserAgent)
@@ -545,7 +545,6 @@ func respondToChallenge(url string) (*ChallengeResponse, error) {
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)
-	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -568,7 +567,6 @@ func pollOrder(orderUrl string, delay time.Duration) (*OrderResponse, error) {
 	}
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	respBytes, err := io.ReadAll(resp.Body)
-	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -685,7 +683,6 @@ func requestCert(csrBytes []byte, finalizeUrl string) (*OrderResponse, error) {
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	defer resp.Body.Close()
 	respBytes, err := io.ReadAll(resp.Body)
-	//fmt.Println(string(respBytes))
 	if err != nil {
 		return nil, err
 	}

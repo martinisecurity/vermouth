@@ -29,6 +29,16 @@ func InitCertCache() {
 	ourCertCache.certMap = make(map[string]CertCacheEntry)
 }
 
+func (cache *certCache) GetKeysAsArray() []string {
+	cache.RLock()
+	defer cache.RUnlock()
+	keys := make([]string, 0, len(cache.certMap))
+	for key := range cache.certMap {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func (cache *certCache) AddEntry(certUrl string, entry CertCacheEntry) {
 	cache.Lock()
 	defer cache.Unlock()

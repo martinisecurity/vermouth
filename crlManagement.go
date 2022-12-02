@@ -9,9 +9,15 @@ import (
 	"github.com/ipifony/vermouth/stivs"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 )
+
+const CrlProxyDev string = "https://wfe.dev.martinisecurity.com/v1/stipa/proxy?url="
+const CrlProxyProd string = "https://wfe.prod.martinisecurity.com/v1/stipa/proxy?url="
+const X5UProxyDev string = "https://wfe.dev.martinisecurity.com/v1/stipa/signer?x5u="
+const X5UProxyProd string = "https://wfe.prod.martinisecurity.com/v1/stipa/signer?x5u="
 
 func beginCrlWorkerQueue(responseChan chan Message, crlWorkChan chan string) {
 
@@ -54,6 +60,11 @@ func refreshCrl(responseChan chan<- Message, crlDistPoint string) {
 		MsgStr:        crlDistPoint + ";10m",
 	}
 
+	shouldTryProxy := false
+	if crlDistPoint == "https://authenticate-api.iconectiv.com/download/v1/crl" || crlDistPoint == "https://authenticate-api-stg.iconectiv.com/download/v1/crl" {
+		shouldTryProxy = true
+	}
+
 	// Fetch or create new cache entry from map
 	var thisCacheEntry = stivs.GetCrlCache().CopyEntry(crlDistPoint)
 	if thisCacheEntry != nil {
@@ -86,12 +97,22 @@ func refreshCrl(responseChan chan<- Message, crlDistPoint string) {
 
 	crlBytes, err := getCrlFromUrl(crlDistPoint)
 	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not load CRL - " + err.Error()}
-		nextAttempt := thisCacheEntry.IncrementError()
-		stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
-		statusMsg.MsgStr = nextAttempt
-		responseChan <- statusMsg
-		return
+		if shouldTryProxy {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CRL: Trying proxy for CRL " + crlDistPoint}
+			martiniCrlProxy := CrlProxyProd
+			if !GlobalConfig.isAcmeProdMode() {
+				martiniCrlProxy = CrlProxyDev
+			}
+			crlBytes, err = getCrlFromUrl(martiniCrlProxy + crlDistPoint)
+		}
+		if err != nil {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not load CRL - " + err.Error()}
+			nextAttempt := thisCacheEntry.IncrementError()
+			stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+			statusMsg.MsgStr = nextAttempt
+			responseChan <- statusMsg
+			return
+		}
 	} else {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CRL: HTTP GET Successful"}
 	}
@@ -134,7 +155,6 @@ func refreshCrl(responseChan chan<- Message, crlDistPoint string) {
 				responseChan <- statusMsg
 				return
 			}
-
 		}
 		if extension.Id.Equal(oids["authorityInformationAccess"]) {
 			aiaUrl, err = getAIAFromAsn1Extension(extension)
@@ -149,79 +169,106 @@ func refreshCrl(responseChan chan<- Message, crlDistPoint string) {
 		}
 	}
 
-	certBytes, err := getCertsFromUrl(aiaUrl)
-	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not fetch certs from AIA"}
-		nextAttempt := thisCacheEntry.IncrementError()
-		stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
-		statusMsg.MsgStr = nextAttempt
-		responseChan <- statusMsg
-		return
-	}
-	var buf []byte
-	getCertsFromBytes(certBytes, &buf)
-	certs, err := x509.ParseCertificates(buf)
-	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not parse certs from AIA"}
-		nextAttempt := thisCacheEntry.IncrementError()
-		stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
-		statusMsg.MsgStr = nextAttempt
-		responseChan <- statusMsg
-		return
-	}
-
-	// Check CRL Signature against signing cert. Spec says first cert in AIA chain is the signer
-	err = revocationList.CheckSignatureFrom(certs[0])
-	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: CRL signature does not match signer"}
-		nextAttempt := thisCacheEntry.IncrementError()
-		stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
-		statusMsg.MsgStr = nextAttempt
-		responseChan <- statusMsg
-		return
-	}
-
-	// Build trust chain
-	intermediatePool := x509.NewCertPool()
-	for _, thisCert := range certs {
-		if thisCert.Subject.ToRDNSequence().String() != thisCert.Issuer.ToRDNSequence().String() {
-			intermediatePool.AddCert(thisCert)
+	doAIAChase := true
+	if !GlobalConfig.isStrictCrlHandling() {
+		parsedUrl, err := url.Parse(aiaUrl)
+		if err != nil || parsedUrl.Host == "" {
+			doAIAChase = false
+			logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CRL: Skipping AIA Chase for CRL " + crlDistPoint}
 		}
 	}
-	intermediatePool.AddCert(stiPaRootCert)
+	if doAIAChase {
+		if aiaUrl == "" {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: AIA not present"}
+			nextAttempt := thisCacheEntry.IncrementError()
+			stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+			statusMsg.MsgStr = nextAttempt
+			responseChan <- statusMsg
+			return
+		}
+		certBytes, err := getCertsFromUrl(aiaUrl)
+		if err != nil || len(certBytes) == 0 {
+			if shouldTryProxy {
+				logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CRL: Trying proxy for " + aiaUrl}
+				martiniX5UProxy := X5UProxyProd
+				if !GlobalConfig.isAcmeProdMode() {
+					martiniX5UProxy = X5UProxyDev
+				}
+				certBytes, err = getCertsFromUrl(martiniX5UProxy + aiaUrl)
+			}
+			if err != nil || len(certBytes) == 0 {
+				logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not fetch certs from AIA"}
+				nextAttempt := thisCacheEntry.IncrementError()
+				stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+				statusMsg.MsgStr = nextAttempt
+				responseChan <- statusMsg
+				return
+			}
+		}
 
-	// Verify CRL signer is authentic
-	optsCrlSigner := x509.VerifyOptions{
-		Roots: intermediatePool,
+		var buf []byte
+		getCertsFromBytes(certBytes, &buf)
+		certs, err := x509.ParseCertificates(buf)
+		if err != nil || len(certs) == 0 {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Could not parse certs from AIA"}
+			nextAttempt := thisCacheEntry.IncrementError()
+			stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+			statusMsg.MsgStr = nextAttempt
+			responseChan <- statusMsg
+			return
+		}
+
+		// Check CRL Signature against signing cert. Spec says first cert in AIA chain is the signer
+		err = revocationList.CheckSignatureFrom(certs[0])
+		if err != nil {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: CRL signature does not match signer"}
+			nextAttempt := thisCacheEntry.IncrementError()
+			stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+			statusMsg.MsgStr = nextAttempt
+			responseChan <- statusMsg
+			return
+		}
+		// Build trust chain
+		intermediatePool := x509.NewCertPool()
+		for _, thisCert := range certs {
+			if thisCert.Subject.ToRDNSequence().String() != thisCert.Issuer.ToRDNSequence().String() {
+				intermediatePool.AddCert(thisCert)
+			}
+		}
+		intermediatePool.AddCert(stiPaRootCert)
+
+		// Verify CRL signer is authentic
+		optsCrlSigner := x509.VerifyOptions{
+			Roots: intermediatePool,
+		}
+		_, err = certs[0].Verify(optsCrlSigner)
+		if err != nil {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: CRL signer does not descent from STI-PA root"}
+			nextAttempt := thisCacheEntry.IncrementError()
+			stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+			statusMsg.MsgStr = nextAttempt
+			responseChan <- statusMsg
+			return
+		}
+
+		// We need to compare the Subject and Issuer ourselves
+		subjectRdnSeq := certs[0].Subject.ToRDNSequence()
+		var subjectName pkix.Name
+		subjectName.FillFromRDNSequence(&subjectRdnSeq)
+
+		issuerRdnSeq := revocationList.Issuer.ToRDNSequence()
+		var issuerName pkix.Name
+		issuerName.FillFromRDNSequence(&issuerRdnSeq)
+
+		if issuerName.String() != subjectName.String() {
+			logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Issuer/Subject Mismatch. Aborting..."}
+			nextAttempt := thisCacheEntry.IncrementError()
+			stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
+			statusMsg.MsgStr = nextAttempt
+			responseChan <- statusMsg
+			return
+		}
 	}
-	_, err = certs[0].Verify(optsCrlSigner)
-	if err != nil {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: CRL signer does not descent from STI-PA root"}
-		nextAttempt := thisCacheEntry.IncrementError()
-		stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
-		statusMsg.MsgStr = nextAttempt
-		responseChan <- statusMsg
-		return
-	}
-
-	// We need to compare the Subject and Issuer ourselves
-	subjectRdnSeq := certs[0].Subject.ToRDNSequence()
-	var subjectName pkix.Name
-	subjectName.FillFromRDNSequence(&subjectRdnSeq)
-
-	issuerRdnSeq := revocationList.Issuer.ToRDNSequence()
-	var issuerName pkix.Name
-	issuerName.FillFromRDNSequence(&issuerRdnSeq)
-
-	if issuerName.String() != subjectName.String() {
-		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CRL: Issuer/Subject Mismatch. Aborting..."}
-		nextAttempt := thisCacheEntry.IncrementError()
-		stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)
-		statusMsg.MsgStr = nextAttempt
-		responseChan <- statusMsg
-		return
-	}
-
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CRL: CRL passed all validation measures"}
 	thisCacheEntry.Number = revocationList.Number
 	thisCacheEntry.ErrorCount = 0
@@ -275,9 +322,11 @@ func refreshCrl(responseChan chan<- Message, crlDistPoint string) {
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CRL: Successfully processed " + processedRevocations + " of " + totalRevocations + " total revocations"}
 
 	durationUntilNextRefresh := "12h" // default refresh
-	if revocationList.NextUpdate.Before(time.Now().Add(12 * time.Hour)) {
-		// Unless sooner
-		durationUntilNextRefresh = (time.Until(revocationList.NextUpdate.Add(5 * time.Minute))).String()
+	if revocationList.NextUpdate.After(time.Now()) {
+		if revocationList.NextUpdate.Before(time.Now().Add(12 * time.Hour)) {
+			// Unless sooner
+			durationUntilNextRefresh = (time.Until(revocationList.NextUpdate.Add(5 * time.Minute))).String()
+		}
 	}
 
 	stivs.GetCrlCache().AddUpdateEntry(crlDistPoint, thisCacheEntry)

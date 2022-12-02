@@ -26,6 +26,8 @@ sti_as:
   acme_crl_uri_fallback: https://authenticate-api.iconectiv.com/download/v1/crl
   acme_crl_issuer_fallback: L = Bridgewater, ST = NJ, CN = STI-PA CRL, C = US, O = STI-PA
   acme_dir: certs/acme
+sti_vs:
+  strict_crl_handling: false
 database:
   enabled: false
   host:

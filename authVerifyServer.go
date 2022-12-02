@@ -1259,7 +1259,7 @@ func (ourSigner *SigningAuth) Configure(keyPath string, certRepoUrl string) {
 	ourSigner.ready = true
 	ourSigner.certRepoUrl = &certRepoUrl
 	ourSigner.eccSigner = eccSigner
-
+	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-AS: Signer Ready"}
 }
 func decodeEccKey(pemEncoded []byte) (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemEncoded)
@@ -1446,7 +1446,6 @@ type ServerStatus struct {
 	CertRepoUrl            string `json:"certRepoUrl"`
 	CaTrustListLastFetched string `json:"caTrustListLastFetched"`
 	CrlLastFetched         string `json:"crlLastFetched"`
-	IsTestMode             bool   `json:"isTestMode"`
 }
 
 func getServerStatus(c *gin.Context) {

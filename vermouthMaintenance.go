@@ -8,8 +8,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +31,22 @@ var (
 )
 
 func BeginVermouthOperations() {
+	// Begin listening for OS signals
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT)
+		for sig := range sigChan {
+			switch sig {
+			case syscall.SIGHUP:
+				// We use this for logging rotation
+				logger.OurLogger.RotateLogs()
+			case syscall.SIGINT:
+				close(sigChan)
+				logger.OurLogger.SyncAndCloseLogs(0)
+			}
+		}
+	}()
+
 	// First let's check to see if we are the latest version of the software
 	go checkForUpdate()
 	// Load STI-PA Root
@@ -71,6 +90,7 @@ func BeginVermouthOperations() {
 	caTrustRefreshTicker := time.NewTicker(24 * time.Hour)
 	var acmeCertRefreshTicker = &time.Ticker{}
 
+	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Vermouth: STI-AS will operate in ACME mode"}
 	acmeCertRefreshTicker = time.NewTicker(24 * time.Hour)
 
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Vermouth: Initial Refresh of trust stores..."}
