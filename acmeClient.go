@@ -588,10 +588,11 @@ func generateCsr() (*ecdsa.PrivateKey, []byte, error) {
 		return nil, nil, err
 	}
 
-	subj := pkix.Name{
-		CommonName: "SHAKEN " + GlobalConfig.GetStiAsCarrierOcn(),
-		Country:    []string{"US"},
-	}
+	// It appears setting the subject is not okay.
+	//subj := pkix.Name{
+	//	CommonName: "SHAKEN " + GlobalConfig.GetStiAsCarrierOcn(),
+	//	Country:    []string{"US"},
+	//}
 
 	extensions := make([]pkix.Extension, 0)
 	// TNAuthList
@@ -637,7 +638,7 @@ func generateCsr() (*ecdsa.PrivateKey, []byte, error) {
 	})
 
 	template := x509.CertificateRequest{
-		Subject:            subj,
+		//Subject:            subj,
 		SignatureAlgorithm: x509.ECDSAWithSHA256,
 		ExtraExtensions:    extensions,
 	}
