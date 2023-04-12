@@ -3,6 +3,7 @@ server:
   log_info_path: log/stir_shaken_info.log
   log_err_path: log/stir_shaken_err.log
   ca_trust_cache: cache/ca_cache.gob
+  dno_dir: cache/
   admin_api_username: admin
   admin_api_password: s3cr3t!
   telemetry_disabled: false

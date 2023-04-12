@@ -252,7 +252,6 @@ func refreshTrustAnchors(responseChan chan<- Message, stiPaRoots *x509.CertPool)
 	token, err := getAccessToken()
 	if err != nil {
 		logger.LogChan <- &logger.LogMessage{Severity: logger.ERROR, MsgStr: "STI-PA CA List: Access Token Error. " + err.Error()}
-		responseChan <- statusMsg
 		logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Using CA-List proxy..."}
 		martiniCAListProxy := CAListProxyProd
 		if GlobalConfig.isAcmeProdMode() {

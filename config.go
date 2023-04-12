@@ -19,6 +19,7 @@ type Config struct {
 		LogInfoPath       string `yaml:"log_info_path"`
 		LogErrPath        string `yaml:"log_err_path"`
 		CaTrustCache      string `yaml:"ca_trust_cache"`
+		DoNotOriginateDir string `yaml:"dno_dir"`
 		AdminApiUsername  string `yaml:"admin_api_username"`
 		AdminApiPassword  string `yaml:"admin_api_password"`
 		InstanceId        string `yaml:"instance_id"`
@@ -91,6 +92,11 @@ func (ourConfig *Config) GetServerCaTrustCache() string {
 	ourConfig.RLock()
 	defer ourConfig.RUnlock()
 	return ourConfig.Server.CaTrustCache
+}
+func (ourConfig *Config) GetDNODir() string {
+	ourConfig.RLock()
+	defer ourConfig.RUnlock()
+	return ourConfig.Server.DoNotOriginateDir
 }
 func (ourConfig *Config) GetServerAdminApiUsername() string {
 	ourConfig.RLock()

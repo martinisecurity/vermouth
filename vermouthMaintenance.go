@@ -88,6 +88,10 @@ func BeginVermouthOperations() {
 	responseChan := make(chan Message, 20)
 
 	caTrustRefreshTicker := time.NewTicker(24 * time.Hour)
+
+	dnoRefreshTicker := time.NewTicker(24 * 7 * time.Hour)
+	refreshDNO(responseChan)
+
 	var acmeCertRefreshTicker = &time.Ticker{}
 
 	logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Vermouth: STI-AS will operate in ACME mode"}
@@ -162,6 +166,14 @@ func BeginVermouthOperations() {
 						go startAuthVerifyServer(responseChan, crlWorkChan)
 					}()
 				}
+			case DNOWorker:
+				if msg.MessageType == Success {
+					dnoRefreshTicker.Reset(24 * 7 * time.Hour)
+					logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "DNO: Refresh successful"}
+				} else {
+					dnoRefreshTicker.Reset(1 * time.Hour)
+					logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "DNO: Refresh failed"}
+				}
 			}
 		case <-caTrustRefreshTicker.C:
 			logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-PA CA List: Maintenance..."}
@@ -173,6 +185,8 @@ func BeginVermouthOperations() {
 			logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "STI-VS: Cache Maintenance..."}
 			go stivs.GetCertCache().CleanExpired()
 			go checkForUpdate() // Just relying on the cache clean-up timer to also check for software updates
+		case <-dnoRefreshTicker.C:
+			logger.LogChan <- &logger.LogMessage{Severity: logger.INFO, MsgStr: "Do Not Originate: Refreshing patterns..."}
 		}
 	}
 }
@@ -183,6 +197,7 @@ const (
 	TrustAnchorWorker MessageSender = iota
 	CrlWorker
 	AuthVerifyWorker
+	DNOWorker
 )
 
 type MessageType int

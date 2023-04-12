@@ -442,12 +442,12 @@ func createNewOrder() (*OrderResponse, string, error) {
 	}
 	nextNonce.Set(resp.Header.Get("Replay-Nonce"))
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, "", errors.New("create order response was " + strconv.Itoa(resp.StatusCode))
-	}
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, "", errors.New("failed to ready body. create order response was " + strconv.Itoa(resp.StatusCode))
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, "", errors.New("create order response was " + strconv.Itoa(resp.StatusCode) + ". Response:\n " + string(respBytes))
 	}
 	newOrderResponse := OrderResponse{}
 	json.Unmarshal(respBytes, &newOrderResponse)

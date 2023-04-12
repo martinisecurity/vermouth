@@ -300,7 +300,10 @@ func processInSpecSign(c *gin.Context) {
 	var origTn string
 	if orig, ok := signingRequestJson["orig"].(map[string]interface{}); ok {
 		if origTn, ok = orig["tn"].(string); ok {
-			orig["tn"] = cleanTn(origTn)
+			cleanedTn := cleanTn(origTn)
+			orig["tn"] = cleanedTn
+			dnoStatus := doNotOriginate.getDNOStatusForCaller(cleanedTn)
+			c.Header(DNOResponseHeader, dnoStatus)
 		} else {
 			go SigningData.AddDataPoint(SigningFailureInvalid)
 			vars := []string{"orig", "bad value"}
@@ -406,6 +409,10 @@ func processEzStirSign(c *gin.Context) {
 	go SigningData.AddDataPoint(SigningSuccess)
 	// SIP Header Friendly Version
 	retString := "Identity: " + serializedPayload
+
+	dnoStatus := doNotOriginate.getDNOStatusForCaller(orig)
+
+	c.Header(DNOResponseHeader, dnoStatus)
 	c.String(http.StatusOK, retString)
 }
 
@@ -476,6 +483,10 @@ func processInSpecVerify(c *gin.Context, crlWorkChan chan string) {
 		c.JSON(MissingParam.toHttpResponseCode(), &thisError)
 		return
 	}
+	// DNO Header being added
+	dnoStatus := doNotOriginate.getDNOStatusForCaller(jsonPayload.VerificationRequest.From.Tn)
+	c.Header(DNOResponseHeader, dnoStatus)
+
 	if jsonPayload.VerificationRequest.Time == nil {
 		thisRecord.StatusBadFormat = true
 		go WriteVerificationRecord(&thisRecord)
@@ -1073,6 +1084,10 @@ func processEzStirVerify(c *gin.Context, crlWorkChan chan string) {
 		c.String(http.StatusOK, "BAD-SIGNATURE")
 		return
 	}
+
+	dnoStatus := doNotOriginate.getDNOStatusForCaller(idJwt.IdOrig.Tn)
+	c.Header(DNOResponseHeader, dnoStatus)
+
 	if idJwt.IdDest == nil {
 		thisRecord.StatusBadFormat = true
 		go WriteVerificationRecord(&thisRecord)
